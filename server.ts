@@ -457,10 +457,20 @@ ${searchContextText}`;
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    // In production (bundled dist/server.cjs), __dirname is the dist folder
+    const distPath = __dirname;
+    console.log(`[Server] Production mode active. Serving from: ${distPath}`);
+    
     app.use(express.static(distPath));
+    
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const indexPath = path.join(distPath, "index.html");
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error("Error sending index.html:", err);
+          res.status(500).send("Internal Server Error: Could not load app.");
+        }
+      });
     });
   }
 
