@@ -1,10 +1,14 @@
-# R97 Voice AI Assistant
+# R97 AI
 
-![R97 Voice AI](https://img.shields.io/badge/Status-Live-success?style=for-the-badge)
+<p align="center">
+  <img src="./public/logo.png" alt="R97 AI Logo" width="400" />
+</p>
+
+![R97 AI Status](https://img.shields.io/badge/Status-Live-success?style=for-the-badge)
 ![NVIDIA Llama 3.1](https://img.shields.io/badge/AI-NVIDIA%20Llama%203.1-blue?style=for-the-badge)
 ![Gemini Live](https://img.shields.io/badge/Voice-Gemini%20Flash%20Live-orange?style=for-the-badge)
 
-**R97 Voice AI** is a cutting-edge, full-stack AI assistant designed to provide deep, detailed, and emotionally resonant interactions. Built with a focus on natural communication, it seamlessly handles text and voice across multiple languages, including English, Hindi, and Hinglish.
+**R97 AI** is a cutting-edge, full-stack AI assistant designed to provide deep, detailed, and emotionally resonant interactions. Built with a focus on natural communication, it seamlessly handles text and voice across multiple languages, including English, Hindi, and Hinglish.
 
 ---
 
@@ -32,6 +36,14 @@
 ### 🛡️ Privacy & Professionalism
 - **Smart Filtering**: In voice/TTS modes, the AI automatically skips reading URLs, technical code blocks, and system session logs to preserve conversational dignity.
 - **Detailed Responses**: Strictly obeys the "Deep Detail" rule, providing thorough explanations for every query.
+
+---
+
+## 🎨 Visual Assets
+
+| Logo | App Icon |
+| :---: | :---: |
+| <img src="./public/logo.png" width="200" /> | <img src="./public/favicon.png" width="100" /> |
 
 ---
 
