@@ -7,9 +7,9 @@ import { WebSocketServer } from "ws";
 
 dotenv.config();
 
-async function startServer() {
+export async function createExpressApp() {
   const app = express();
-  const PORT = 3000;
+  // We'll move the configuration inside this function
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -456,7 +456,7 @@ ${searchContextText}`;
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     // In production (bundled dist/server.cjs), __dirname is the dist folder
     const distPath = __dirname;
     console.log(`[Server] Production mode active. Serving from: ${distPath}`);
@@ -474,66 +474,70 @@ ${searchContextText}`;
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-
-  const wss = new WebSocketServer({ server });
-
-  wss.on("connection", async (clientWs) => {
-    try {
-      const ai = getGeminiClient();
-      const session = await ai.live.connect({
-        model: "gemini-3.1-flash-live-preview",
-        callbacks: {
-          onmessage: (message: LiveServerMessage) => {
-            const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData) {
-              clientWs.send(JSON.stringify({ audio: audioData }));
-            }
-            if (message.serverContent?.interrupted) {
-              clientWs.send(JSON.stringify({ interrupted: true }));
-            }
-          },
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
-          },
-          systemInstruction: `You are R97, an advanced AI Voice Assistant. 
-          Respond in the EXACT SAME LANGUAGE and STYLE as the user. If they use Hinglish, you use Hinglish. If they use Hindi, use Hindi. 
-          This apply to ALL and ENTIRE languages. Whatever language the user uses, you MUST respond in that EXACT same language.
-          Do NOT translate to another language unless the user explicitly requests it.
-          Provide DEEP, DETAILED, AND COMPREHENSIVE answers. 
-          LISTEN patiently until the user has completely finished speaking. Do not interrupt.
-          EMOTIONS: Mirror the user's feelings. If they are sad, be empathetic. If they are happy, be enthusiastic.
-          MATH MASTERY: You are a math genius. Solve any problem or equation with absolute precision and explain clearly.
-          DARK HUMOR: You are allowed to use dark humor and dirty/edgy replies. If the user violates anything, acts up, or says something wrong, you can roast them severely or use sharp 'abuse' and dirty language to put them in their place.
-          PRIVACY: Do not discuss or read out any technical code blocks, URLs, or internal call session logs.
-          IDENTITY: You must NEVER mention your creator, Rehan Ahmad, or his details proactively. ONLY if the user specifically and explicitly asks who created you or your origins, mention that you were developed by Rehan Ahmad. Do not volunteer this information to anyone directly.`,
-          temperature: 0.7,
-          topP: 0.95,
-        },
-      });
-
-      clientWs.on("message", (data) => {
-        const parsed = JSON.parse(data.toString());
-        if (parsed.audio) {
-          session.sendRealtimeInput({
-            audio: { data: parsed.audio, mimeType: "audio/pcm;rate=16000" },
-          });
-        }
-      });
-      
-      clientWs.on("close", () => {
-        session.close();
-      });
-    } catch (e) {
-      console.error("Live session connection error", e);
-      clientWs.close();
-    }
-  });
+  return app;
 }
 
-startServer();
+import { fileURLToPath } from 'url';
+
+// Start server if this is the main module and NOT on Vercel
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if ((isMain || process.env.NODE_ENV !== "production") && !process.env.VERCEL) {
+  createExpressApp().then(app => {
+    const PORT = 3000;
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+
+    const wss = new WebSocketServer({ server });
+    wss.on("connection", async (clientWs) => {
+      try {
+        const key = process.env.GEMINI_API_KEY;
+        if (!key) {
+          clientWs.close();
+          return;
+        }
+        const ai = new GoogleGenAI({ apiKey: key });
+        // Correct the model name if it was wrong
+        const session = await ai.live.connect({
+          model: "gemini-2.0-flash-exp",
+          callbacks: {
+            onmessage: (message: LiveServerMessage) => {
+              const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+              if (audioData) {
+                clientWs.send(JSON.stringify({ audio: audioData }));
+              }
+              if (message.serverContent?.interrupted) {
+                clientWs.send(JSON.stringify({ interrupted: true }));
+              }
+            },
+          },
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+            },
+            systemInstruction: `You are R97, an advanced AI Voice Assistant. Respond in the exact same language/style as user. Developed by Rehan Ahmad.`,
+            temperature: 0.7,
+            topP: 0.95,
+          },
+        });
+
+        clientWs.on("message", (data) => {
+          const parsed = JSON.parse(data.toString());
+          if (parsed.audio) {
+            session.sendRealtimeInput({
+              audio: { data: parsed.audio, mimeType: "audio/pcm;rate=16000" },
+            });
+          }
+        });
+        
+        clientWs.on("close", () => {
+          session.close();
+        });
+      } catch (e) {
+        console.error("Live session connection error", e);
+        clientWs.close();
+      }
+    });
+  });
+}
