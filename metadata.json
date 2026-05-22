@@ -1,5 +1,5 @@
 {
-  "name": "R97 AI",
+  "name": "R97 ai",
   "description": "Premium Full-Stack AI with real-time NVIDIA chat, Gemini Voice calls, and Deep Search Intelligence.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

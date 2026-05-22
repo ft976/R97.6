@@ -542,7 +542,7 @@ export default function App() {
               <Menu className="w-5 h-5" />
             </button>
             <h1 className="font-pixel text-[12px] md:text-sm pt-1 uppercase tracking-widest font-bold">
-              R97 AI
+              R97 CHAT
             </h1>
           </div>
           <div className="flex items-center gap-2">
