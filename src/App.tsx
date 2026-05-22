@@ -542,7 +542,7 @@ export default function App() {
               <Menu className="w-5 h-5" />
             </button>
             <h1 className="font-pixel text-[12px] md:text-sm pt-1 uppercase tracking-widest font-bold">
-              R97 CHAT
+              R97 AI
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -588,7 +588,7 @@ export default function App() {
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-yellow-200 border-2 border-black px-2 py-0.5 text-[8px]">
                   INFO
                 </span>
-                Chat with R97 or use the call option above for voice communication.
+                Chat with R97 AI or use the call option above for voice communication.
               </p>
             </div>
           ) : (
