@@ -277,9 +277,17 @@ export default function App() {
       if (!response.ok) {
         let errStr = "Failed to fetch response";
         try {
-          const err = await response.json();
-          errStr = err.error || errStr;
-        } catch (e) {}
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const err = await response.json();
+            errStr = err.error || errStr;
+          } else {
+            const text = await response.text();
+            errStr = text || `Error ${response.status}: ${response.statusText}`;
+          }
+        } catch (e) {
+          errStr = `Error ${response.status}: ${response.statusText}`;
+        }
         throw new Error(errStr);
       }
 
