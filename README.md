@@ -49,6 +49,18 @@
 
 ---
 
+## ⚖️ Legal & Documentation
+
+For detailed information on the usage, privacy, and development of R97 AI, please refer to:
+
+- **[License](./LICENSE)** - MIT License information.
+- **[Privacy Policy](./PRIVACY.md)** - How we handle your data.
+- **[Terms of Service](./TERMS.md)** - Guidelines for usage and AI behavior.
+- **[Contributing](./CONTRIBUTING.md)** - How to help improve the project.
+- **[Security](./SECURITY.md)** - Reporting vulnerabilities.
+
+---
+
 ## 🚀 Deployment
 
 Must configure the following environment variables:
