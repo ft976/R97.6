@@ -129,7 +129,7 @@ ${searchContextText}`;
 
       openaiMessages.unshift({ role: "system", content: systemPrompt });
 
-      console.log(`[API][${requestId}] Calling NVIDIA API with model: meta/llama-3.1-405b-instruct`);
+      console.log(`[API][${requestId}] Calling NVIDIA API with model: meta/llama-3.1-8b-instruct`);
       const nvidiaRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -137,9 +137,9 @@ ${searchContextText}`;
           "Authorization": `Bearer ${nvidiaApiKey.trim()}`
         },
         body: JSON.stringify({
-          model: "meta/llama-3.1-405b-instruct", // Upgraded to 405b for better quality
+          model: "meta/llama-3.1-8b-instruct",
           messages: openaiMessages,
-          temperature: 0.6,
+          temperature: 0.7,
           max_tokens: 4096,
           stream: true
         })
@@ -148,7 +148,12 @@ ${searchContextText}`;
       if (!nvidiaRes.ok) {
         const errText = await nvidiaRes.text();
         console.error(`[API][${requestId}] NVIDIA API error (${nvidiaRes.status}): ${errText}`);
-        throw new Error(`NVIDIA API Error: ${errText || nvidiaRes.statusText}`);
+        
+        // If 404, maybe the integrate endpoint is down or model missing, try fallback
+        if (nvidiaRes.status === 404) {
+          throw new Error(`NVIDIA Model Not Found (404). This might be a temporary issue with NVIDIA's Llama 3.1 8B endpoint.`);
+        }
+        throw new Error(`NVIDIA API Error (${nvidiaRes.status}): ${errText || nvidiaRes.statusText}`);
       }
 
       const reader = nvidiaRes.body?.getReader();
