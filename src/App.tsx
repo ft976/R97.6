@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from "react";
 import { CopyButton } from "./components/CopyButton";
 import {
@@ -27,7 +28,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { motion } from "motion/react";
 import { CodeBlockViewer } from "./components/CodeBlockViewer";
-import { CallInterface } from "./components/CallInterface";
+import { SYSTEM_PROMPT } from "./systemPrompt";
 
 type Source = {
   uri: string;
@@ -82,56 +83,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  // Web search tuning mode
-  const [searchMode, setSearchMode] = useState<"compact" | "standard" | "disabled">(
-    () => (localStorage.getItem("pixel_ai_search_mode") as any) || "disabled"
-  );
-  
-  // NVIDIA TTI generator variables
-  // Removed TTI functionality
-
-  useEffect(() => {
-    localStorage.setItem("pixel_ai_search_mode", searchMode);
-  }, [searchMode]);
-
   const [deleteChatId, setDeleteChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isCallOpen, setIsCallOpen] = useState(false);
-  const [showSoon, setShowSoon] = useState(false);
-
-  const handleCallClick = () => {
-    setShowSoon(true);
-    setTimeout(() => setShowSoon(false), 3000);
-  };
-
-  const handleEndCall = (durationSec: number) => {
-    setIsCallOpen(false);
-    if (durationSec < 1) return; // Ignore very short attempts
-
-    const mins = Math.floor(durationSec / 60);
-    const secs = durationSec % 60;
-    const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-    
-    const summaryText = `📞 **Voice Call Session**\n- **Duration:** ${durationStr}\n- **Time:** ${new Date().toLocaleTimeString()}\n- **Status:** Completed`;
-    const callSummary: Message = {
-      id: `call-${Date.now()}`,
-      role: "model",
-      parts: [{ text: summaryText }],
-      text: summaryText,
-    };
-
-    setChats((prev) =>
-      prev.map((c) =>
-        c.id === activeChatId
-          ? {
-              ...c,
-              messages: [...c.messages, callSummary],
-              updatedAt: Date.now(),
-            }
-          : c
-      )
-    );
-  };
 
   const activeChat = chats.find((c) => c.id === activeChatId) || chats[0];
   const messages = activeChat.messages;
@@ -260,40 +213,44 @@ export default function App() {
     let aiSources: Source[] = [];
 
     try {
-      const response = await fetch("/api/chat", {
+      const apiKey = import.meta.env.NVIDIA_API_KEY;
+      if (!apiKey) {
+        throw new Error("nvidia_missing: An NVIDIA API Key environment variable (NVIDIA_API_KEY) is required.");
+      }
+
+      const formattedMessages = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...currentMessages.map(m => ({
+          role: m.role === "model" ? "assistant" : "user",
+          content: m.text
+        })),
+        { role: "user", content: userMsg.text }
+      ];
+
+      const response = await fetch("/nv-api/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
         signal: controller.signal,
         body: JSON.stringify({
-          parts: userMsg.parts,
-          historyContext: currentMessages.map((m) => ({
-            role: m.role,
-            parts: m.parts,
-          })),
-          searchMode,
+          model: "meta/llama-3.1-8b-instruct",
+          messages: formattedMessages,
+          stream: true,
         }),
       });
 
       if (!response.ok) {
-        let errStr = "Failed to fetch response";
-        try {
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const err = await response.json();
-            errStr = err.error || errStr;
-          } else {
-            const text = await response.text();
-            errStr = text || `Error ${response.status}: ${response.statusText}`;
-          }
-        } catch (e) {
-          errStr = `Error ${response.status}: ${response.statusText}`;
-        }
-        throw new Error(errStr);
+        if (response.status === 429) throw new Error("quota_exceeded: NVIDIA API Quota Exceeded");
+        throw new Error(`Failed to fetch response: ${response.statusText}`);
       }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
+
+      let lastUpdateTime = Date.now();
 
       if (reader) {
         while (true) {
@@ -337,17 +294,22 @@ export default function App() {
               } catch (e) {}
             }
           }
-          if (chunkAdded) {
-            setStreamText(aiText);
-          }
-          if (reasoningAdded) {
-            setStreamReasoning(aiReasoning);
-          }
-          if (sourcesUpdated) {
-            setStreamSources(aiSources);
+
+          // Throttle state updates to 30ms (approx 33fps) to prevent React Markdown from freezing the UI
+          const now = Date.now();
+          if (now - lastUpdateTime > 30) {
+            if (chunkAdded) setStreamText(aiText);
+            if (reasoningAdded) setStreamReasoning(aiReasoning);
+            if (sourcesUpdated) setStreamSources(aiSources);
+            lastUpdateTime = now;
           }
         }
       }
+      
+      // Ensure final state updates
+      if (aiText) setStreamText(aiText);
+      if (aiReasoning) setStreamReasoning(aiReasoning);
+      if (aiSources.length) setStreamSources(aiSources);
 
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -547,22 +509,6 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handleCallClick}
-              className="p-2 hover:bg-yellow-50 pixel-border-sm bg-white text-black transition-colors relative"
-              title="Start Call"
-            >
-              <Phone className="w-5 h-5" />
-              {showSoon && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="absolute top-full mt-2 right-0 bg-black text-white px-3 py-1.5 uppercase text-[8px] font-pixel whitespace-nowrap z-50 shadow-[4px_4px_0_rgba(255,105,180,1)] border-2 border-white"
-                >
-                  Coming Soon!
-                </motion.div>
-              )}
-            </button>
-            <button
               onClick={() => setIsSettingsOpen(true)}
               className="p-2 hover:bg-yellow-50 pixel-border-sm bg-white text-black transition-colors"
               title="Settings"
@@ -571,8 +517,6 @@ export default function App() {
             </button>
           </div>
         </header>
-
-        {isCallOpen && <CallInterface onClose={handleEndCall} />}
 
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto bg-sky-100 bg-pixel-grid p-0">
@@ -588,7 +532,7 @@ export default function App() {
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-yellow-200 border-2 border-black px-2 py-0.5 text-[8px]">
                   INFO
                 </span>
-                Chat with R97 AI or use the call option above for voice communication.
+                Chat with R97 AI to begin.
               </p>
             </div>
           ) : (
@@ -649,7 +593,7 @@ export default function App() {
                             </p>
                             <p className="text-xs text-black leading-relaxed">
                               {msg.text.startsWith("nvidia_missing") 
-                                ? "An NVIDIA API Key environment variable is required to authenticate. Please consult deployment environment guides to set up NVIDIA_API_KEY." 
+                                ? "An NVIDIA API Key environment variable (NVIDIA_API_KEY) is required. Please set it in your environment." 
                                 : msg.text.startsWith("nvidia_quota_exceeded") 
                                 ? "Your configured NVIDIA key has exceeded its API tier quota rate. Please check your developer credits on build.nvidia.com." 
                                 : "An invalid key or authorization error occurred during communication. Check your credentials in your build environment."}
@@ -902,21 +846,6 @@ export default function App() {
 
                 <div className="flex justify-between items-center px-3 pb-3">
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchMode(prev => {
-                          if (prev === "disabled") return "compact";
-                          if (prev === "compact") return "standard";
-                          return "disabled";
-                        });
-                      }}
-                      className="text-black bg-yellow-100 font-bold pixel-border-sm hover:bg-yellow-200 px-3 py-1.5 text-[8px] font-pixel active:translate-y-0.5 transition-all ml-1.5 flex items-center gap-1.5 uppercase tracking-wider shadow-[1px_1px_0_rgba(0,0,0,1)] hover:shadow-none"
-                      title="Click to cycle Web Search: Compact ⚡ | Full 🎯 | Off ❌"
-                    >
-                      <Sparkles className="w-3 h-3 text-yellow-600 shrink-0" />
-                      Search: {searchMode === "compact" ? "⚡ COMPACT" : searchMode === "standard" ? "🎯 FULL" : "❌ OFF"}
-                    </button>
                   </div>
 
                   {isLoading ? (
@@ -1004,51 +933,6 @@ export default function App() {
                       </a>
                     </div>
                   </div>
-                </div>
-              </div>
-              
-              {/* Web Search Mode Options */}
-              <div className="bg-yellow-50 border-2 border-black p-4 space-y-3 relative shadow-[3px_3px_0_rgba(0,0,0,1)]">
-                <div className="absolute -top-3 left-4 bg-yellow-200 border-2 border-black px-2 uppercase text-[10px] font-bold font-pixel tracking-widest text-black">
-                  Search Engine Opt
-                </div>
-                <p className="text-[11px] text-gray-700 leading-relaxed pt-2">
-                  Fine-tune the web integration bounds. Premium <strong className="text-black">Compact Mode</strong> extracts exact page summaries to save latency and preserve query precision.
-                </p>
-                <div className="grid grid-cols-3 gap-2 pt-1 font-pixel text-[9px]">
-                  <button
-                    type="button"
-                    onClick={() => setSearchMode("disabled")}
-                    className={`p-2 border-2 border-black transition-all font-bold ${
-                      searchMode === "disabled"
-                        ? "bg-black text-white"
-                        : "bg-white text-black hover:bg-gray-100"
-                    }`}
-                  >
-                    NO SEARCH
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSearchMode("compact")}
-                    className={`p-2 border-2 border-black transition-all font-bold ${
-                      searchMode === "compact"
-                        ? "bg-black text-white"
-                        : "bg-white text-black hover:bg-gray-100"
-                    }`}
-                  >
-                    COMPACT
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSearchMode("standard")}
-                    className={`p-2 border-2 border-black transition-all font-bold ${
-                      searchMode === "standard"
-                        ? "bg-black text-white"
-                        : "bg-white text-black hover:bg-gray-100"
-                    }`}
-                  >
-                    STANDARD
-                  </button>
                 </div>
               </div>
             </div>

@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    envPrefix: ['VITE_', 'NVIDIA_API_KEY'],
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -12,6 +13,13 @@ export default defineConfig(() => {
       },
     },
     server: {
+      proxy: {
+        '/nv-api': {
+          target: 'https://integrate.api.nvidia.com/v1',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/nv-api/, '')
+        }
+      },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
