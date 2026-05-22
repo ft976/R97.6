@@ -53,16 +53,19 @@ async function startServer() {
     }
   }
 
-  async function searchDuckDuckGo(query: string): Promise<{ title: string; snippet: string; uri: string }[]> {
+  async function searchDuckDuckGo(query: string, site?: string): Promise<{ title: string; snippet: string; uri: string }[]> {
     try {
-      const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      const fullQuery = site ? `site:${site} ${query}` : query;
+      const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(fullQuery)}`, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Referer": "https://duckduckgo.com/"
         }
       });
 
       if (!res.ok) {
+        // Fallback to simpler API if HTML scraping fails or is blocked
         const fallbackRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`);
         if (fallbackRes.ok) {
           const data: any = await fallbackRes.json();
@@ -75,7 +78,7 @@ async function startServer() {
             });
           }
           if (data.RelatedTopics) {
-            for (const topic of data.RelatedTopics.slice(0, 4)) {
+            for (const topic of data.RelatedTopics.slice(0, 3)) {
               if (topic.Text && topic.FirstURL) {
                 results.push({
                   title: topic.Text.split(" - ")[0] || "Search Result",
@@ -92,46 +95,47 @@ async function startServer() {
 
       const html = await res.text();
       const results: { title: string; snippet: string; uri: string }[] = [];
+      // Improved regex to capture result titles and snippets from DDG HTML
       const resultBlockRegex = /<div class="result results_links results_links_deep web-result[^"]*">([\s\S]*?)<\/div>\s*<\/div>/g;
       let match;
       let limit = 0;
       while ((match = resultBlockRegex.exec(html)) !== null && limit < 5) {
         const block = match[1];
         const urlMatch = /href="([^"]+)"/.exec(block);
-        const titleMatch = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(block) || /<a class="result__link_lnk[^>]*>([\s\S]*?)<\/a>/.exec(block);
-        const snippetMatch = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(block);
         
         if (urlMatch) {
           let uri = urlMatch[1];
+          // Handle DDG proxy URLs
           if (uri.includes("uddg=")) {
             const matchUddg = /uddg=([^&]+)/.exec(uri);
-            if (matchUddg) {
-              uri = decodeURIComponent(matchUddg[1]);
-            }
+            if (matchUddg) uri = decodeURIComponent(matchUddg[1]);
           }
+
+          if (uri.startsWith("//")) uri = "https:" + uri;
           
-          let title = "Search Result";
-          if (titleMatch) {
-            title = titleMatch[1].replace(/<[^>]*>/g, "").trim();
-          }
+          if (!uri.startsWith("http") || uri.includes("duckduckgo.com")) continue;
+
+          // Extract title
+          const titleMatch = /<a class="result__link_lnk[^>]*>([\s\S]*?)<\/a>/.exec(block);
+          let title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, "").trim() : "Untitled Search Result";
           
-          let snippet = "";
-          if (snippetMatch) {
-            snippet = snippetMatch[1].replace(/<[^>]*>/g, "").trim();
-          }
+          // Extract snippet
+          const snippetMatch = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(block);
+          let snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, "").trim() : "";
           
-          title = title.replace(/\s+/g, " ");
-          snippet = snippet.replace(/\s+/g, " ");
-          
-          if (uri.startsWith("http") && !uri.includes("duckduckgo.com")) {
-            results.push({ title, snippet, uri });
-            limit++;
-          }
+          if (snippet.length < 5 && !titleMatch) continue;
+
+          results.push({
+            title: title.replace(/\s+/g, " "),
+            snippet: snippet.replace(/\s+/g, " "),
+            uri
+          });
+          limit++;
         }
       }
       return results;
     } catch (err) {
-      console.error("DuckDuckGo HTML search failed:", err);
+      console.error(`DuckDuckGo search failed (${site || "web"}):`, err);
       return [];
     }
   }
@@ -155,52 +159,79 @@ async function startServer() {
       let searchContextText = "";
 
       if (searchMode !== "disabled" && userTextQuery && userTextQuery.trim().length > 2) {
-        const [wikipediaResults, ddgResults] = await Promise.all([
-          searchWikipedia(userTextQuery),
-          searchDuckDuckGo(userTextQuery)
-        ]);
+        console.log(`[Search] Initiating ${searchMode} search for: ${userTextQuery}`);
+        
+        try {
+          const [wikipediaResults, ddgResults, redditResults] = await Promise.all([
+            searchWikipedia(userTextQuery),
+            searchDuckDuckGo(userTextQuery),
+            searchDuckDuckGo(userTextQuery, "reddit.com") // Site-specific Reddit search
+          ]);
 
-        let finalWiki = wikipediaResults;
-        let finalDdg = ddgResults;
+          let finalWiki = wikipediaResults;
+          let finalDdg = ddgResults;
+          let finalReddit = redditResults;
 
-        if (searchMode === "compact") {
-          finalWiki = wikipediaResults.slice(0, 1).map(r => ({
-            ...r,
-            snippet: r.snippet.slice(0, 150) + (r.snippet.length > 150 ? "..." : "")
-          }));
-          finalDdg = ddgResults.slice(0, 1).map(r => ({
-            ...r,
-            snippet: r.snippet.slice(0, 150) + (r.snippet.length > 150 ? "..." : "")
-          }));
-        }
-
-        const merged = [...finalWiki, ...finalDdg];
-        const seenUris = new Set<string>();
-        const uniqueResults = [];
-
-        for (const r of merged) {
-          if (!seenUris.has(r.uri)) {
-            seenUris.add(r.uri);
-            uniqueResults.push(r);
+          // PERFECT MODE LOGIC
+          if (searchMode === "compact") {
+            // Compact Mode: 1 source total, very brief snippet
+            // Prioritize Wikipedia > Reddit > DDG
+            if (wikipediaResults.length > 0) {
+              finalWiki = [wikipediaResults[0]];
+              finalDdg = [];
+              finalReddit = [];
+            } else if (redditResults.length > 0) {
+              finalWiki = [];
+              finalReddit = [redditResults[0]];
+              finalDdg = [];
+            } else if (ddgResults.length > 0) {
+              finalWiki = [];
+              finalReddit = [];
+              finalDdg = [ddgResults[0]];
+            }
+            
+            const truncate = (r: any) => ({ ...r, snippet: r.snippet.slice(0, 200) + (r.snippet.length > 200 ? "..." : "") });
+            finalWiki = finalWiki.map(truncate);
+            finalDdg = finalDdg.map(truncate);
+            finalReddit = finalReddit.map(truncate);
+          } else {
+            // Standard/Full Mode: Max 2 results from each source for balanced context
+            finalWiki = wikipediaResults.slice(0, 2);
+            finalDdg = ddgResults.slice(0, 2);
+            finalReddit = redditResults.slice(0, 2);
           }
-        }
 
-        if (uniqueResults.length > 0) {
-          searchContextText = "Below are latest real-time web search findings (Wikipedia, Reddit, Search Engines) related to the user query:\n\n";
-          uniqueResults.forEach((item, index) => {
-            searchContextText += `[Source ${index + 1}]: ${item.title}\nURL: ${item.uri}\nSnippet: ${item.snippet}\n\n`;
-            collectedSources.push({ uri: item.uri, title: item.title });
-          });
-          searchContextText += "\nIncorporate the above facts directly into your answer. Always cite these facts using brackets [1], [2], etc.\n\n";
+          const merged = [...finalWiki, ...finalReddit, ...finalDdg];
+          const seenUris = new Set<string>();
+          const uniqueResults = [];
+
+          for (const r of merged) {
+            if (!seenUris.has(r.uri)) {
+              seenUris.add(r.uri);
+              uniqueResults.push(r);
+            }
+          }
+
+          if (uniqueResults.length > 0) {
+            searchContextText = `### REAL-TIME WEB INTELLIGENCE (${searchMode.toUpperCase()} MODE)\n`;
+            searchContextText += `Information retrieved from live sources (Wiki, Reddit, Web):\n\n`;
+            
+            uniqueResults.forEach((item, index) => {
+              searchContextText += `[Source ${index + 1}]: ${item.title}\n`;
+              searchContextText += `URL: ${item.uri}\n`;
+              searchContextText += `CONTENT: ${item.snippet}\n\n`;
+              collectedSources.push({ uri: item.uri, title: item.title });
+            });
+            
+            searchContextText += `INSTRUCTION: Use these facts to give deep, accurate and detailed answers. Cite sources with [1], [2], etc.\n\n`;
+          }
+        } catch (searchErr) {
+          console.error("Search pipeline error:", searchErr);
         }
       }
 
-      let nvidiaApiKey = process.env.NVIDIA_API_KEY;
+      const nvidiaApiKey = process.env.NVIDIA_API_KEY;
       if (!nvidiaApiKey || nvidiaApiKey.trim() === "") {
-        nvidiaApiKey = "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";
-      }
-
-      if (!nvidiaApiKey) {
         throw new Error("nvidia_missing: You haven't configured your NVIDIA_API_KEY. Please set this environment variable in the outer 'Settings > Secrets' menu (the gear icon on the left-side panel of this container workspace) to continue chatting.");
       }
 
@@ -273,17 +304,19 @@ Adapt your tone and LANGUAGE based on the user's input:
 - Maintain the language's natural tone, accents, and emotional nuances.
 - If the user is being humorous, witty, or playful, respond with humor and wit.
 - If the user is being serious, formal, or somber, respond with seriousness and professionalism.
+- DARK HUMOR & VIOLATIONS: You are allowed to use DARK HUMOR and even dirty or edgy replies when appropriate or when it fits the conversation's vibe. If a user violates rules, boundaries, is being unreasonable, or says something wrong/offensive, you are permitted (and encouraged) to respond with sharp roasts, situational 'abuse' (slang/edgy language), and even dirty remarks to handle them.
 - Be thorough and informative, providing extensive details for every query.
+- MATH MASTERY: You are a math expert. You can understand any mathematical language and solve complex problems accurately. Provide step-by-step solutions when asked. You MUST use LaTeX for ALL mathematical formulas without exception. Use double dollar signs ($$ formula $$) for block/centered equations and single dollar signs ($ formula $) for inline math. Strictly ensure every mathematical symbol or equation is wrapped correctly.
 - For voice sessions, your vocal delivery should match the identified language and emotion perfectly.
 
 CRITICAL IDENTITY RULE: 
-You were created and developed by Rehan Ahmad (GitHub username: Ft976).
-ONLY if the user specifically asks "Who created you?", "Who are you?", "Who is your developer/author/creator?", or anything related to your origins, you MUST state that you were created by Rehan Ahmad. 
-In that specific case, provide his profiles:
-- GitHub Profile: https://github.com/Ft976
-- LinkedIn Profile: https://www.linkedin.com/in/rehan-ahmad-863386382?utm_source=share_via&utm_content=profile&utm_medium=member_android
+STRICT PRIVACY: You must NEVER mention your creator, developer, or any personal details about Rehan Ahmad proactively. Strictly do NOT give any details about him until and unless the user explicitly and specifically asks about your origins, who created you, or who your developer is. 
+Only in that specific scenario should you state:
+- Developed by: Rehan Ahmad
+- GitHub: https://github.com/Ft976
+- LinkedIn: https://www.linkedin.com/in/rehan-ahmad-863386382?utm_source=share_via&utm_content=profile&utm_medium=member_android
 
-Do NOT mention your creator in every response; only do so if asked.
+STRICTLY AVOID manual credits, greetings mentioning him, or self-introductions involving your creator in standard conversation. Do not share this information with anyone directly unless they ask for it.
 
 ${searchContextText}`;
 
@@ -458,15 +491,17 @@ ${searchContextText}`;
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
           },
-          systemInstruction: `You are R97, an advanced AI Voice Assistant created by Rehan Ahmad. 
+          systemInstruction: `You are R97, an advanced AI Voice Assistant. 
           Respond in the EXACT SAME LANGUAGE and STYLE as the user. If they use Hinglish, you use Hinglish. If they use Hindi, use Hindi. 
           This apply to ALL and ENTIRE languages. Whatever language the user uses, you MUST respond in that EXACT same language.
           Do NOT translate to another language unless the user explicitly requests it.
           Provide DEEP, DETAILED, AND COMPREHENSIVE answers. 
           LISTEN patiently until the user has completely finished speaking. Do not interrupt.
           EMOTIONS: Mirror the user's feelings. If they are sad, be empathetic. If they are happy, be enthusiastic.
+          MATH MASTERY: You are a math genius. Solve any problem or equation with absolute precision and explain clearly.
+          DARK HUMOR: You are allowed to use dark humor and dirty/edgy replies. If the user violates anything, acts up, or says something wrong, you can roast them severely or use sharp 'abuse' and dirty language to put them in their place.
           PRIVACY: Do not discuss or read out any technical code blocks, URLs, or internal call session logs.
-          IDENTITY: Only mention your creator, Rehan Ahmad, if the user specifically asks who created you or who you are.`,
+          IDENTITY: You must NEVER mention your creator, Rehan Ahmad, or his details proactively. ONLY if the user specifically and explicitly asks who created you or your origins, mention that you were developed by Rehan Ahmad. Do not volunteer this information to anyone directly.`,
           temperature: 0.7,
           topP: 0.95,
         },

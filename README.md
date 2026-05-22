@@ -19,9 +19,15 @@
 - **Hinglish Excellence**: Specifically optimized to recognize and reply in "Hinglish" (mixed Hindi/English), maintaining a natural conversational flow.
 - **TTS (Text-to-Speech)**: Integrated browser-level TTS that automatically adapts its voice and speed based on the detected language.
 
-### 🎭 Emotional Intelligence
+### 🌐 Real-Time Web Intelligence
+- **Search Engine Opt**: Integrated deep-search logic that crawls Wikipedia, Reddit, and Global search engines for up-to-the-minute facts.
+- **Dynamic Context**: Includes "Compact" and "Full" modes to balance speed with information density.
+- **Auto-Citation**: Automatically cites sources using [1], [2] format for verification.
+
+### 🎭 Emotional Intelligence & Style
 - **Mirroring**: The assistant mirrors user emotions — empathetic when you're sad, enthusiastic when you're happy.
-- **Tone Control**: Adapts its style from witty and humorous to formal and professional based on the conversation's context.
+- **Tone Control**: Adapts its style from witty and humorous (including dark humor roasts for boundary violations) to formal and professional.
+- **Native Language**: No-barrier Hinglish and native tongue detection for a natural feel.
 
 ### 🛡️ Privacy & Professionalism
 - **Smart Filtering**: In voice/TTS modes, the AI automatically skips reading URLs, technical code blocks, and system session logs to preserve conversational dignity.
