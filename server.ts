@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
+import fs from "node:fs";
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import dotenv from "dotenv";
 import { WebSocketServer } from "ws";
@@ -14,7 +14,24 @@ export async function createExpressApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+  // CORS-like headers for Vercel and local
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") return res.sendStatus(200);
+    next();
+  });
+
   // Debug route
+  app.get("/api/health", (req, res) => {
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || "development"
+    });
+  });
+
   app.get("/api/debug-status", (req, res) => {
     res.json({
       status: "online",
@@ -149,9 +166,12 @@ ${searchContextText}`;
         const errText = await nvidiaRes.text();
         console.error(`[API][${requestId}] NVIDIA API error (${nvidiaRes.status}): ${errText}`);
         
-        // If 404, maybe the integrate endpoint is down or model missing, try fallback
+        // Handle specific error codes
         if (nvidiaRes.status === 404) {
-          throw new Error(`NVIDIA Model Not Found (404). This might be a temporary issue with NVIDIA's Llama 3.1 8B endpoint.`);
+          throw new Error("NVIDIA NIM Error (404): The selected model endpoint was not found. Please check if 'meta/llama-3.1-8b-instruct' is supported in your region.");
+        }
+        if (nvidiaRes.status === 429) {
+          throw new Error("NVIDIA NIM Error (429): Quota exceeded or rate limited. Please check your billing/credits.");
         }
         throw new Error(`NVIDIA API Error (${nvidiaRes.status}): ${errText || nvidiaRes.statusText}`);
       }
@@ -207,19 +227,28 @@ ${searchContextText}`;
 
 
   // Vite/Static handling
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("[Server] Vite middleware mounted");
+    } catch (e) {
+      console.warn("[Server] Failed to load Vite (expected in non-dev envs):", e);
+    }
   } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    } else {
+      console.warn("[Server] Warning: 'dist' folder not found for static serving");
+    }
   }
 
   return app;
